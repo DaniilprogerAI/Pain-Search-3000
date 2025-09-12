@@ -2,104 +2,157 @@ import requests
 import datetime
 import re
 import sqlite3
-import pypandoc
+import os
 
-DB_NAME = "stackoverflow.db"
-RTF_FILE = "stackoverflow_report.rtf"
+DB_NAME = "github_issues.db"
+RTF_FILE = "github_report.rtf"
+GITHUB_TOKEN = ""  # если есть токен, вставьте для увеличения лимитов API
 
+HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+
+
+# ================== DATABASE ==================
 def init_db():
-    """Создаём таблицу, если её нет"""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS questions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        link TEXT,
-        creation_date TEXT,
-        is_answered INTEGER,
-        pains TEXT
-    )
-    """)
+                CREATE TABLE IF NOT EXISTS issues
+                (
+                    id
+                    INTEGER
+                    PRIMARY
+                    KEY
+                    AUTOINCREMENT,
+                    repo
+                    TEXT,
+                    title
+                    TEXT,
+                    link
+                    TEXT,
+                    creation_date
+                    TEXT,
+                    state
+                    TEXT,
+                    pains
+                    TEXT
+                )
+                """)
     conn.commit()
     conn.close()
 
-def get_stackoverflow_questions(tag="django", pagesize=10):
-    url = "https://api.stackexchange.com/2.3/questions"
-    params = {
-        "order": "desc",
-        "sort": "creation",
-        "tagged": tag,
-        "site": "stackoverflow",
-        "pagesize": pagesize,
-        "filter": "withbody"
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-    questions = []
-    for q in data.get("items", []):
-        questions.append({
-            "title": q["title"],
-            "link": q["link"],
-            "creation_date": datetime.datetime.fromtimestamp(q["creation_date"]),
-            "is_answered": int(q["is_answered"])
-        })
-    return questions
 
+def save_to_db(issues):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    for i in issues:
+        cur.execute("""
+                    INSERT INTO issues (repo, title, link, creation_date, state, pains)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, (i["repo"], i["title"], i["link"], str(i["creation_date"]), i["state"], ", ".join(i["pains"])))
+    conn.commit()
+    conn.close()
+
+
+# ================== GITHUB SEARCH ==================
+def search_repositories(query="python", per_page=5):
+    url = "https://api.github.com/search/repositories"
+    params = {
+        "q": query,
+        "sort": "stars",
+        "order": "desc",
+        "per_page": per_page
+    }
+    response = requests.get(url, params=params, headers=HEADERS)
+    data = response.json()
+    repos = []
+    for item in data.get("items", []):
+        repos.append(item["full_name"])  # owner/repo
+    return repos
+
+
+def get_github_issues(repo, state="open", per_page=10):
+    url = f"https://api.github.com/repos/{repo}/issues"
+    params = {"state": state, "per_page": per_page}
+    response = requests.get(url, params=params, headers=HEADERS)
+    data = response.json()
+    issues = []
+    for item in data:
+        if "pull_request" in item:
+            continue
+        issues.append({
+            "repo": repo,
+            "title": item["title"],
+            "link": item["html_url"],
+            "creation_date": datetime.datetime.strptime(item["created_at"], "%Y-%m-%dT%H:%M:%SZ"),
+            "state": item["state"]
+        })
+    return issues
+
+
+# ================== ANALYSIS ==================
 def extract_pain_points(text):
     markers = {
         "error": "Ошибка / баг",
-        "not working": "Не работает",
         "fail": "Сбой",
         "slow": "Медленно",
-        "deploy": "Проблемы с деплоем",
-        "urgent": "Срочная задача",
+        "performance": "Проблемы с производительностью",
         "crash": "Краш приложения",
+        "memory": "Проблемы с памятью",
+        "feature request": "Запрос новой функции",
     }
     text_lower = text.lower()
-    pains = [value for key, value in markers.items() if re.search(rf"\b{key}\b", text_lower)]
+    pains = [v for k, v in markers.items() if re.search(rf"\b{k}\b", text_lower)]
     return pains
 
-def save_to_db(questions):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    for q in questions:
-        cur.execute("""
-        INSERT INTO questions (title, link, creation_date, is_answered, pains)
-        VALUES (?, ?, ?, ?, ?)
-        """, (q["title"], q["link"], str(q["creation_date"]), q["is_answered"], ", ".join(q["pains"])))
-    conn.commit()
-    conn.close()
 
+# ================== EXPORT RTF ==================
 def export_to_rtf():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT title, link, creation_date, is_answered, pains FROM questions ORDER BY id DESC LIMIT 20")
+    cur.execute("SELECT repo, title, link, creation_date, state, pains FROM issues ORDER BY id DESC LIMIT 50")
     rows = cur.fetchall()
     conn.close()
 
-    # Формируем Markdown-документ
-    md_content = "# Отчёт Stack Overflow\n\n"
+    file_exists = os.path.exists(RTF_FILE)
+
+    if not file_exists:
+        rtf_content = "{\\rtf1\\ansi\\deff0\n"
+        rtf_content += "{\\b GitHub Issues Report}\\par\n\n"
+    else:
+        with open(RTF_FILE, "r", encoding="utf-8") as f:
+            rtf_content = f.read()
+        if rtf_content.endswith("}"):
+            rtf_content = rtf_content[:-1]
+
     for r in rows:
-        md_content += f"## {r[0]}\n"
-        md_content += f"- 🔗 {r[1]}\n"
-        md_content += f"- 🕒 {r[2]}\n"
-        md_content += f"- Ответ есть: {'Да' if r[3] else 'Нет'}\n"
-        md_content += f"- ❗ Боли: {r[4] if r[4] else 'Не обнаружено'}\n\n"
+        rtf_content += f"\\b Repo:\\b0 {r[0]}\\par\n"
+        rtf_content += f"\\b Title:\\b0 {r[1]}\\par\n"
+        rtf_content += f"Link: {r[2]}\\par\n"
+        rtf_content += f"Date: {r[3]} | State: {r[4]}\\par\n"
+        rtf_content += f"Pains: {r[5]}\\par\n"
+        rtf_content += "\\par\n"
 
-    # Конвертируем в RTF
-    pypandoc.convert_text(md_content, 'rtf', format='md', outputfile=RTF_FILE, extra_args=['--standalone'])
-    print(f"✅ Отчёт сохранён в {RTF_FILE}")
+    rtf_content += "}"
+    with open(RTF_FILE, "w", encoding="utf-8") as f:
+        f.write(rtf_content)
 
+    print(f"✅ Данные добавлены в {RTF_FILE}")
+
+
+# ================== MAIN ==================
 if __name__ == "__main__":
     init_db()
-    tag = "python"  # можно менять на react, api, python
-    results = get_stackoverflow_questions(tag, 10)
+    # Шаг 1: Автоматический поиск репозиториев по тегу python
+    repos = search_repositories(query="python", per_page=5)
+    print("Найдены репозитории:", repos)
 
-    # добавляем анализ болей
-    for r in results:
-        r["pains"] = extract_pain_points(r["title"])
+    # Шаг 2: Сбор issues и анализ болей
+    all_issues = []
+    for repo in repos:
+        issues = get_github_issues(repo, per_page=10)
+        for i in issues:
+            i["pains"] = extract_pain_points(i["title"])
+        all_issues.extend(issues)
 
-    save_to_db(results)
+    save_to_db(all_issues)
     export_to_rtf()
-

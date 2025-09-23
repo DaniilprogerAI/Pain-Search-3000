@@ -1,158 +1,234 @@
-import requests
-import datetime
-import re
-import sqlite3
+"""
+auto_personas.py
+Автоматическое выделение целевой аудитории + извлечение болевых точек и генерация персон.
+Ожидаемые колонки в input CSV:
+  user_id, age, country, job, monthly_budget, visits_per_month, pain_text
+"""
+
+import json
+from collections import Counter, defaultdict
+import numpy as np
+import pandas as pd
 import os
+import shutil
 
-DB_NAME = "github_issues.db"
-RTF_FILE = "github_report.rtf"
-GITHUB_TOKEN = ""  # если есть токен, вставьте для увеличения лимитов API
+# ML & NLP
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD, NMF
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import silhouette_score
 
-HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+# NLP utilities
+import nltk
+from nltk.tokenize import RegexpTokenizer
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import re
 
+# Visualization
+import matplotlib.pyplot as plt
+from matplotlib import cm
 
-# ================== DATABASE ==================
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-                CREATE TABLE IF NOT EXISTS issues
-                (
-                    id
-                    INTEGER
-                    PRIMARY
-                    KEY
-                    AUTOINCREMENT,
-                    repo
-                    TEXT,
-                    title
-                    TEXT,
-                    link
-                    TEXT,
-                    creation_date
-                    TEXT,
-                    state
-                    TEXT,
-                    pains
-                    TEXT
-                )
-                """)
-    conn.commit()
-    conn.close()
+# ---------------------------
+# 1) Загрузка и простая валидация
+# ---------------------------
+def load_data(path_csv):
+    df = pd.read_csv(path_csv)
+    # минимальная валидация
+    required = {'user_id','login','location','public_repos','followers','bio'}
+    if not required.issubset(set(df.columns)):
+        missing = required - set(df.columns)
+        raise ValueError(f"В CSV не хватает колонок: {missing}")
+    df = df.dropna(subset=['user_id'])  # drop rows without id
+    return df
 
+def clean_text(s):
+    if pd.isna(s):
+        return ""
+    s = str(s).lower()
+    s = re.sub(r'http\S+',' ', s)
+    s = re.sub(r'[^a-zа-яё0-9\s]', ' ', s)
+    tokenizer = RegexpTokenizer(r'\w+')
+    tokens = tokenizer.tokenize(s.lower())
+    tokens = [t for t in tokens if t not in stop_words and len(t) > 2]
+    tokens = [lemmatizer.lemmatize(t) for t in tokens]
+    return " ".join(tokens)
 
-def save_to_db(issues):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    for i in issues:
-        cur.execute("""
-                    INSERT INTO issues (repo, title, link, creation_date, state, pains)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """, (i["repo"], i["title"], i["link"], str(i["creation_date"]), i["state"], ", ".join(i["pains"])))
-    conn.commit()
-    conn.close()
-
-
-# ================== GITHUB SEARCH ==================
-def search_repositories(query="python", per_page=5):
-    url = "https://api.github.com/search/repositories"
-    params = {
-        "q": query,
-        "sort": "stars",
-        "order": "desc",
-        "per_page": per_page
+# ---------------------------
+# 3) Векторизация и извлечение тем (NMF)
+# ---------------------------
+def extract_topics(texts, n_topics=6, max_features=2000):
+    """Возвращает модель NMF, vectorizer и топ-слова для каждой темы"""
+    vectorizer = TfidfVectorizer(max_features=max_features, ngram_range=(1,2))
+    X = vectorizer.fit_transform(texts)
+    nmf = NMF(n_components=n_topics, random_state=42, init='nndsvda', max_iter=400)
+    W = nmf.fit_transform(X)
+    H = nmf.components_
+    feature_names = vectorizer.get_feature_names_out()
+    topics = []
+    for topic_idx, comp in enumerate(H):
+        terms_idx = np.argsort(comp)[-12:][::-1]
+        terms = [feature_names[i] for i in terms_idx]
+        topics.append(terms)
+    return {
+        'nmf': nmf,
+        'vectorizer': vectorizer,
+        'topic_terms': topics,
+        'topic_matrix': W
     }
-    response = requests.get(url, params=params, headers=HEADERS)
-    data = response.json()
-    repos = []
-    for item in data.get("items", []):
-        repos.append(item["full_name"])  # owner/repo
-    return repos
 
-
-def get_github_issues(repo, state="open", per_page=10):
-    url = f"https://api.github.com/repos/{repo}/issues"
-    params = {"state": state, "per_page": per_page}
-    response = requests.get(url, params=params, headers=HEADERS)
-    data = response.json()
-    issues = []
-    for item in data:
-        if "pull_request" in item:
-            continue
-        issues.append({
-            "repo": repo,
-            "title": item["title"],
-            "link": item["html_url"],
-            "creation_date": datetime.datetime.strptime(item["created_at"], "%Y-%m-%dT%H:%M:%SZ"),
-            "state": item["state"]
-        })
-    return issues
-
-
-# ================== ANALYSIS ==================
-def extract_pain_points(text):
-    markers = {
-        "error": "Ошибка / баг",
-        "fail": "Сбой",
-        "slow": "Медленно",
-        "performance": "Проблемы с производительностью",
-        "crash": "Краш приложения",
-        "memory": "Проблемы с памятью",
-        "feature request": "Запрос новой функции",
+# ---------------------------
+# 4) Кластеризация пользователей по числовым признакам
+# ---------------------------
+def cluster_users(df, num_clusters=3, features=['public_repos','followers']):
+    X = df[features].fillna(0).astype(float).values
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(X)
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+    labels = kmeans.fit_predict(Xs)
+    score = silhouette_score(Xs, labels) if len(set(labels)) > 1 else None
+    return {
+        'kmeans': kmeans,
+        'labels': labels,
+        'scaler': scaler,
+        'silhouette': score
     }
-    text_lower = text.lower()
-    pains = [v for k, v in markers.items() if re.search(rf"\b{k}\b", text_lower)]
-    return pains
 
+# ---------------------------
+# 5) Генерация описаний персон на основе кластера + тем
+# ---------------------------
+def synthesize_personas(df, cluster_labels, topic_matrix, topic_terms, top_n_topics=2):
+    df = df.copy()
+    df['cluster'] = cluster_labels
+    personas = []
+    for c in sorted(df['cluster'].unique()):
+        subset = df[df['cluster']==c]
+        count = len(subset)
+        countries = subset['location'].value_counts().head(3).to_dict()
+        avg_repos = float(subset['public_repos'].dropna().mean()) if count>0 else None
+        avg_followers = float(subset['followers'].dropna().mean()) if count>0 else None
 
-# ================== EXPORT RTF ==================
-def export_to_rtf():
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT repo, title, link, creation_date, state, pains FROM issues ORDER BY id DESC LIMIT 50")
-    rows = cur.fetchall()
-    conn.close()
+        # aggregate topic scores for cluster (topic_matrix rows align with rows in df in same order)
+        cluster_indices = subset.index.tolist()
+        if len(cluster_indices) == 0:
+            top_topics = []
+        else:
+            cluster_topic_scores = topic_matrix[cluster_indices].mean(axis=0)
+            top_topic_idxs = list(np.argsort(cluster_topic_scores)[-top_n_topics:][::-1])
+            top_topics = [topic_terms[i] for i in top_topic_idxs]
 
-    file_exists = os.path.exists(RTF_FILE)
+        persona = {
+            'cluster_id': int(c),
+            'size': int(count),
+            'top_countries': countries,
+            'avg_public_repos': avg_repos,
+            'avg_followers': avg_followers,
+            'top_topics_terms': top_topics
+        }
 
-    if not file_exists:
-        rtf_content = "{\\rtf1\\ansi\\deff0\n"
-        rtf_content += "{\\b GitHub Issues Report}\\par\n\n"
-    else:
-        with open(RTF_FILE, "r", encoding="utf-8") as f:
-            rtf_content = f.read()
-        if rtf_content.endswith("}"):
-            rtf_content = rtf_content[:-1]
+        # generate natural language summary
+        persona['summary'] = generate_persona_text(persona)
+        personas.append(persona)
+    return personas
 
-    for r in rows:
-        rtf_content += f"\\b Repo:\\b0 {r[0]}\\par\n"
-        rtf_content += f"\\b Title:\\b0 {r[1]}\\par\n"
-        rtf_content += f"Link: {r[2]}\\par\n"
-        rtf_content += f"Date: {r[3]} | State: {r[4]}\\par\n"
-        rtf_content += f"Pains: {r[5]}\\par\n"
-        rtf_content += "\\par\n"
+def generate_persona_text(p):
+    lines = []
+    lines.append(f"Кластер #{p['cluster_id']} — ~{p['size']} пользователей.")
+    if p['top_countries']:
+        countries = ", ".join([f"{k} ({v})" for k,v in p['top_countries'].items()])
+        lines.append(f"Основные страны: {countries}.")
+    if p['avg_public_repos'] is not None:
+        lines.append(f"Сколько публичных репозиториев: {p['avg_public_repos']:.0f}.")
+    if p['avg_followers'] is not None:
+        lines.append(f"Средний уровень подписок: {p['avg_followers']:.0f}.")
+    if p['top_topics_terms']:
+        topic_snippets = ["; ".join(t[:6]) for t in p['top_topics_terms']]
+        lines.append("Основные болевые точки / интересы (темы): " + " | ".join(topic_snippets))
+    return " ".join(lines)
 
-    rtf_content += "}"
-    with open(RTF_FILE, "w", encoding="utf-8") as f:
-        f.write(rtf_content)
+# ---------------------------
+# 6) Визуализация кластеров (2D проекция)
+# ---------------------------
+from sklearn.decomposition import PCA
 
-    print(f"✅ Данные добавлены в {RTF_FILE}")
+def plot_clusters(df, labels, features=['public_repos','followers'], out_path='clusters.png'):
+    X = df[features].fillna(0).astype(float).values
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(X)
+    pca = PCA(n_components=2)
+    coords = pca.fit_transform(Xs)
+    plt.figure(figsize=(8,6))
+    unique_labels = sorted(set(labels))
+    cmap = plt.colormaps['tab10'].resampled(len(unique_labels))
+    for i,l in enumerate(unique_labels):
+        mask = np.array(labels)==l
+        plt.scatter(coords[mask,0], coords[mask,1], label=f'cluster {l}', alpha=0.7)
+    plt.legend()
+    plt.title('Кластеры пользователей (PCA 2D)')
+    plt.xlabel('PC1'), plt.ylabel('PC2')
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    return out_path
 
+# ---------------------------
+# 7) Основной pipeline
+# ---------------------------
+def build_personas_pipeline(csv_path, out_json='personas.json', num_clusters=3, n_topics=6):
+    df = load_data(csv_path)
+    # clean text
+    df['clean_pain'] = df['bio'].apply(clean_text)
+    # topic extraction
+    topics_res = extract_topics(df['clean_pain'].astype(str).tolist(), n_topics=n_topics)
+    # clustering
+    cluster_res = cluster_users(df, num_clusters=num_clusters)
+    labels = cluster_res['labels']
+    # synthesize personas
+    personas = synthesize_personas(df, labels, topics_res['topic_matrix'], topics_res['topic_terms'], top_n_topics=2)
+    # save
+    with open(out_json, 'w', encoding='utf-8') as f:
+        json.dump({
+            'personas': personas,
+            'silhouette': cluster_res['silhouette'],
+            'topic_terms': topics_res['topic_terms']
+        }, f, ensure_ascii=False, indent=2)
+    # plot
+    plot_path = plot_clusters(df, labels)
+    return out_json, plot_path
 
-# ================== MAIN ==================
-if __name__ == "__main__":
-    init_db()
-    # Шаг 1: Автоматический поиск репозиториев по тегу python
-    repos = search_repositories(query="python", per_page=5)
-    print("Найдены репозитории:", repos)
+# ---------------------------
+# 8) Пример вызова при запуске
+# ---------------------------
+if __name__ == '__main__':
+    import argparse
 
-    # Шаг 2: Сбор issues и анализ болей
-    all_issues = []
-    for repo in repos:
-        issues = get_github_issues(repo, per_page=10)
-        for i in issues:
-            i["pains"] = extract_pain_points(i["title"])
-        all_issues.extend(issues)
+    # Папка для локальных данных NLTK в виртуальном окружении
+    nltk_data_dir = os.path.join(os.path.dirname(__file__), ".venv", "nltk_data")
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
 
-    save_to_db(all_issues)
-    export_to_rtf()
+    # Скачиваем только стандартные пакеты
+    for pkg in ['punkt', 'stopwords', 'wordnet']:
+        try:
+            nltk.data.find(f'tokenizers/{pkg}')
+        except LookupError:
+            nltk.download(pkg, download_dir=nltk_data_dir)
+
+    # Форсируем использование обычного Punkt вместо punkt_tab
+    from nltk.tokenize import punkt
+
+    punkt.PunktLanguageVars = punkt.PunktLanguageVars
+
+    stop_words = set(stopwords.words('english')) | set(stopwords.words('russian'))  # bilingual
+    lemmatizer = WordNetLemmatizer()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--csv', required=False, default='github_users.csv', help='Путь к CSV')
+    parser.add_argument('--clusters', type=int, default=3)
+    parser.add_argument('--topics', type=int, default=49)
+    args = parser.parse_args()
+    out_json, plot_path = build_personas_pipeline(args.csv, num_clusters=args.clusters, n_topics=args.topics)
+    print("Personas saved to:", out_json)
+    print("Cluster plot saved to:", plot_path)

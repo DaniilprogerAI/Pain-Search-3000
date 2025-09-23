@@ -5,6 +5,7 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize, sent_tokenize
 import re
+nltk.download("punkt_tab")
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -51,8 +52,16 @@ def extract_features(text):
 # 4) Анализ нескольких конкурентов
 # ---------------------------
 competitor_urls = [
-    "https://example1.com/services",
-    "https://example2.com/pricing",
+    "https://www.imaginarycloud.com/services/python-development-services",
+    "https://www.intecfy.com/hire-freelance-python-developers/",
+    "https://applicants.bairesdev.com/job/71/279637/apply?utm_source=linkedinjobposting&utm_medium=jobposting&utm_campaign=Remote-20250813&urlHash=PS0d&lang=en",
+    "https://www.caktusgroup.com/",
+    "https://startups.epam.com/services/python-consulting?utm_source=chatgpt.com",
+    "https://dashdevs.com/python-development-services/?utm_source=chatgpt.com",
+    "https://www.iflexion.com/developers/python",
+    "https://uvik.net/services/python-consulting/?utm_source=chatgpt.com",
+    "https://www.netguru.com/services/python-consulting?utm_source=chatgpt.com",
+    "https://www.cloverdynamics.com/expertise/technologies/python-consulting?utm_source=chatgpt.com"
 ]
 
 results = []

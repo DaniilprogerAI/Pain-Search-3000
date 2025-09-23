@@ -4,13 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1fa644c0-fccd-416d-b164-8cdae5fb2027" name="Changes" comment="Github search">
-      <change afterPath="$PROJECT_DIR$/competitors.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/sample_users.csv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/Pain-Search-3000.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Pain-Search-3000.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+    <list default="true" id="1fa644c0-fccd-416d-b164-8cdae5fb2027" name="Changes" comment="Определи целевую аудиторию (кто твой клиент, чем он живёт, какие у него боли).">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/competitors.py" beforeDir="false" afterPath="$PROJECT_DIR$/competitors.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -67,7 +63,7 @@
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
-  <component name="RunManager" selected="Python.load">
+  <component name="RunManager">
     <configuration name="load" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="Pain-Search-3000" />
       <option name="ENV_FILES" value="" />
@@ -169,7 +165,15 @@
       <option name="project" value="LOCAL" />
       <updated>1757655857593</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="Определи целевую аудиторию (кто твой клиент, чем он живёт, какие у него боли).">
+      <option name="closed" value="true" />
+      <created>1758605142357</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1758605142357</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -179,7 +183,8 @@
     <MESSAGE value="Pain-Search-3000" />
     <MESSAGE value="Takes the last questions by tag" />
     <MESSAGE value="Github search" />
-    <option name="LAST_COMMIT_MESSAGE" value="Github search" />
+    <MESSAGE value="Определи целевую аудиторию (кто твой клиент, чем он живёт, какие у него боли)." />
+    <option name="LAST_COMMIT_MESSAGE" value="Определи целевую аудиторию (кто твой клиент, чем он живёт, какие у него боли)." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/Pain_Search_3000$main.coverage" NAME="main Coverage Results" MODIFIED="1757739026949" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

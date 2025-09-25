@@ -1,0 +1,25 @@
+{
+  "skills": ["Python","Telegram","GitHub","Bot Development","Scratch","Discord Bot Development","Web Scraping","API Integration","REST API","Scripting","JSON","Automation", "Software Debugging", "Troubleshooting", "System Administration"],
+  "services": [
+    "Developing Bots for Discord",
+    "Automation of work processes",
+    "Scripts for data processing",
+    "Creating mini-applications and tools",
+    "Integration of APIs and external services",
+    "Parsing and web scraping",
+    "Python training scripts and mini-courses",
+    "Automation of multimedia content"
+  ],
+  "python_features": [
+    "Работа с базами данных (SQLite, создание и управление таблицами)",
+    "Алгоритмизация и построение формул для оценки клиентов и конкурентов",
+    "Нормализация данных и вычисление метрик (скоринг, уникальность фич)",
+    "Обработка списков, множеств и строк",
+    "Автоматизация задач и процессов (например, через Discord-ботов)",
+    "Создание функций с параметрами и весами для анализа",
+    "Работа с коллекциями данных (множества, словари, JSON)",
+    "Систематизация и упрощение бизнес-логики в виде кода",
+    "Программирование игровых механик и симуляций (например, примеры с Deep.io)",
+    "Прототипирование идей для мультсериала в виде скриптов"
+  ]
+}
